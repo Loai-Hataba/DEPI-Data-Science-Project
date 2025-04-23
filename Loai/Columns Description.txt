@@ -1,0 +1,22 @@
+Columns and Descriptions
+
+Patient_ID – Unique identifier assigned to each patient
+Age – Patient's age (between 18 and 80)
+Gender – 0: Female, 1: Male
+Education_Level – 1: Primary, 2: Middle School, 3: High School, 4: University, 5: Postgraduate
+Marital_Status – 0: Single, 1: Married, 2: Divorced, 3: Widowed
+Occupation – 0: Unemployed, 1: Employed, 2: Retired, 3: Student
+Income_Level – 0: Low, 1: Medium, 2: High
+Living_Area – 0: Rural, 1: Urban
+Diagnosis – 0: Not schizophrenic, 1: Schizophrenic
+Disease_Duration – Duration of illness for schizophrenia patients (1-40 years)
+Hospitalizations – Number of hospital admissions (ranges from 0 to 10 for schizophrenia patients)
+Family_History – 0: No, 1: Yes (Genetic predisposition)
+Substance_Use – 0: No, 1: Yes (Tobacco, alcohol, or other substances)
+Suicide_Attempt – 0: No, 1: Yes
+Positive_Symptom_Score – Ranges from 0 to 100 (Higher scores indicate more symptoms)
+Negative_Symptom_Score – Ranges from 0 to 100 (Higher scores indicate more negative symptoms)
+GAF_Score – Global Assessment of Functioning (Ranges from 0 to 100, lower scores indicate worse functioning)
+Social_Support – 0: Low, 1: Medium, 2: High
+Stress_Factors – 0: Low, 1: Medium, 2: High
+Medication_Adherence – 0: Poor, 1: Moderate, 2: Good
