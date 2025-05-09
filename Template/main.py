@@ -6,7 +6,7 @@ import shutil
 import sys
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Union
-
+from models.tabular_models import GenericTabularModel
 import numpy as np
 import pandas as pd
 import joblib
@@ -412,6 +412,106 @@ async def delete_model_endpoint(model_id: str):
         # This case should ideally not happen if model_to_delete was found earlier
         # but model_manager.remove_model somehow failed (e.g., if model_id disappeared between checks)
         raise HTTPException(status_code=500, detail=f"Failed to remove model '{model_id}' from manager, though it was found initially.")
+
+@app.post("/api/models/upload", response_model=ModelUploadResponse)
+async def upload_new_model_endpoint( # Renamed to avoid conflict if you have other 'upload_model'
+    name: str = Form(...),
+    description: str = Form(...),
+    input_type: str = Form(...),  # "image", "text", "tabular"
+    model_file: UploadFile = File(...),
+    feature_names_csv: Optional[str] = Form(None)  # Comma-separated for tabular, optional
+):
+    if input_type.lower() not in ["image", "text", "tabular"]:
+        raise HTTPException(status_code=400, detail="Invalid input_type. Must be 'image', 'text', or 'tabular'.")
+
+    # Generate a unique ID for the model
+    # Using input_type in ID can help distinguish, plus a UUID part
+    new_model_id = f"{input_type.lower()}-{uuid.uuid4().hex[:8]}"
+
+    # Define file path for saving
+    file_extension = os.path.splitext(model_file.filename)[1]
+    if not file_extension: # Default extension if none provided
+        # For scikit-learn models, .pkl is common. For Keras, .h5 or .keras.
+        # This might need to be smarter or required from user.
+        file_extension = ".pkl" if input_type == "tabular" else ".dat"
+        logger.warning(f"Uploaded file '{model_file.filename}' has no extension. Assuming '{file_extension}'.")
+
+    saved_file_name = f"{new_model_id}{file_extension}"
+    saved_file_path = os.path.join("saved_models", saved_file_name)
+
+    # Create saved_models directory if it doesn't exist
+    os.makedirs("saved_models", exist_ok=True)
+
+    # Save the uploaded file
+    try:
+        with open(saved_file_path, "wb") as buffer:
+            shutil.copyfileobj(model_file.file, buffer)
+        logger.info(f"Uploaded model file saved to: {saved_file_path}")
+    except Exception as e:
+        logger.error(f"Failed to save uploaded model file {saved_file_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Could not save model file: {str(e)}")
+    finally:
+        model_file.file.close()
+
+    # Instantiate the correct model class
+    new_model_instance: Optional[MLModel] = None
+    try:
+        if input_type.lower() == "image":
+            new_model_instance = ImageClassificationModel(
+                model_id=new_model_id, name=name, description=description, model_file_path=saved_file_path
+            )
+        elif input_type.lower() == "text":
+            new_model_instance = TextAnalysisModel(
+                model_id=new_model_id, name=name, description=description, model_file_path=saved_file_path
+            )
+        elif input_type.lower() == "tabular":
+            parsed_feature_names: Optional[List[str]] = None
+            if feature_names_csv:
+                parsed_feature_names = [fn.strip() for fn in feature_names_csv.split(',') if fn.strip()]
+            
+            new_model_instance = GenericTabularModel(
+                model_id=new_model_id, name=name, description=description, 
+                model_file_path=saved_file_path, feature_names=parsed_feature_names
+            )
+        
+        if new_model_instance is None: # Should be caught by input_type validation earlier
+            raise ValueError("Internal error: Could not determine model type for instantiation.")
+
+        # Attempt to load and add the model to the manager
+        if model_manager.add_model(new_model_instance): # add_model calls new_model_instance.load()
+            logger.info(f"Successfully loaded and added new model: {name} (ID: {new_model_id})")
+            return ModelUploadResponse(
+                model_id=new_model_id, name=name, status="success",
+                message="Model uploaded, loaded, and added successfully."
+            )
+        else:
+            # model.load() likely failed. Error logged by model's load() or ModelManager.add_model().
+            # Clean up the saved file if loading failed.
+            if os.path.exists(saved_file_path):
+                try:
+                    os.remove(saved_file_path)
+                    logger.info(f"Cleaned up saved model file {saved_file_path} due to loading failure.")
+                except Exception as e_del:
+                    logger.error(f"Error cleaning up file {saved_file_path}: {e_del}")
+            
+            return ModelUploadResponse(
+                model_id=new_model_id, name=name, status="error",
+                message=f"Model file saved, but failed to load/add the model. Check server logs for details from model '{name}'.load()."
+            )
+
+    except Exception as e:
+        # Catch any other exceptions during instantiation or processing
+        logger.error(f"Error processing uploaded model {name} (ID: {new_model_id}): {str(e)}")
+        # Clean up the saved file if any error occurred after saving it
+        if os.path.exists(saved_file_path):
+            try:
+                os.remove(saved_file_path)
+                logger.info(f"Cleaned up saved model file {saved_file_path} due to an unexpected error during processing.")
+            except Exception as e_del:
+                logger.error(f"Error cleaning up file {saved_file_path} after another error: {e_del}")
+        # Re-raise as HTTPException for FastAPI to handle
+        raise HTTPException(status_code=500, detail=f"An error occurred while processing the uploaded model: {str(e)}")
+
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

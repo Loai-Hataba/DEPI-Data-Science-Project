@@ -7,6 +7,17 @@ import joblib
 from keras.models import load_model as load_keras_model
 from typing import Dict, Any, Union
 from .base_model import MLModel
+import logging
+from typing import Optional,List
+import os
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# Get a logger instance (usually at module level)
+logger = logging.getLogger(__name__)
 
 class CardioModel(MLModel):
     def __init__(self):
@@ -279,3 +290,79 @@ class SchizophreniaModel(MLModel):
                 "error": True,
                 "message": "An internal server error occurred." # Generic message for unexpected errors
             }
+        
+class GenericTabularModel(MLModel):
+    def __init__(self, model_id: str, name: str, description: str, model_file_path: str, feature_names: Optional[List[str]] = None):
+        super().__init__(model_id, name, description, "tabular", model_file_path)
+        self.user_provided_feature_names = feature_names
+        self.loaded_feature_names_in_: Optional[List[str]] = None # From model if available
+
+    def load(self) -> bool:
+        if not self.model_file_path or not os.path.exists(self.model_file_path):
+            logger.error(f"Model file not found for {self.name} at {self.model_file_path}")
+            return False
+        try:
+            self.model = joblib.load(self.model_file_path)
+            if hasattr(self.model, 'feature_names_in_'):
+                self.loaded_feature_names_in_ = list(self.model.feature_names_in_)
+            logger.info(f"{self.name} (Generic Tabular) loaded successfully from {self.model_file_path}.")
+            return True
+        except Exception as e:
+            logger.error(f"Error loading generic tabular model {self.name} from {self.model_file_path}: {str(e)}")
+            return False
+
+    @property
+    def active_feature_names(self) -> List[str]:
+        if self.user_provided_feature_names:
+            return self.user_provided_feature_names
+        if self.loaded_feature_names_in_:
+            return self.loaded_feature_names_in_
+        logger.warning(f"No feature names available for {self.name}. Prediction might be unreliable or require specific input format.")
+        return []
+
+    def predict(self, features: Dict[str, Any]) -> Dict[str, Union[str, float]]:
+        if not self.model:
+            return {"prediction": "Error: Model not loaded", "confidence": 0.0, "error": True, "message": "Model not loaded."}
+
+        try:
+            current_f_names = self.active_feature_names
+            
+            if not current_f_names:
+                logger.warning(f"Attempting prediction for {self.name} without defined feature order. Input dict keys will be used in their current order.")
+                # This is risky; order of dict items is not guaranteed for older Python versions
+                # For robust behavior, feature_names should always be defined or input should be a list.
+                input_values = [list(features.values())] # [[val1, val2, ...]]
+                input_df_for_predict = pd.DataFrame(input_values)
+            else:
+                missing_keys = set(current_f_names) - set(features.keys())
+                if missing_keys:
+                    return {
+                        "prediction": "Error: Missing features", "confidence": 0.0, "error": True,
+                        "message": f"Missing input features: {missing_keys}",
+                        "required_features": current_f_names
+                    }
+                # Ensure correct order and selection of features
+                ordered_features = {fname: features[fname] for fname in current_f_names}
+                input_df_for_predict = pd.DataFrame([ordered_features])[current_f_names]
+
+            # Basic prediction
+            raw_prediction = self.model.predict(input_df_for_predict)
+            prediction_result = str(raw_prediction[0]) # Convert to string
+
+            confidence_score = 1.0  # Default confidence
+            class_probs = None
+
+            if hasattr(self.model, 'predict_proba'):
+                probabilities = self.model.predict_proba(input_df_for_predict)
+                confidence_score = float(np.max(probabilities[0]))
+                if hasattr(self.model, 'classes_'):
+                    class_probs = {str(cls): float(prob) for cls, prob in zip(self.model.classes_, probabilities[0])}
+
+            response = {"prediction": prediction_result, "confidence": confidence_score}
+            if class_probs:
+                response["class_probabilities"] = class_probs
+            return response
+
+        except Exception as e:
+            logger.error(f"Error during prediction with {self.name}: {str(e)}")
+            return {"prediction": "Error", "confidence": 0.0, "error": True, "message": str(e)}
