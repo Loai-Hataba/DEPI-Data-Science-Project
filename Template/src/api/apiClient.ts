@@ -1,4 +1,5 @@
 import axios from 'axios';
+
 const API_URL = 'http://localhost:8000';
 
 // API client for interacting with the backend
@@ -70,21 +71,7 @@ const apiClient = {
       );
       return response.data;
     } catch (error) {
-      // Enhanced error handling for tabular predictions
       console.error('Error making tabular prediction:', error);
-      
-      // Extract detailed error information from the response
-      if (error.response) {
-        // Preserve the original error but add structured information
-        throw {
-          message: error.response.data.detail || 'Error during prediction',
-          response: error.response,
-          required_features: error.response.data.required_features || [],
-          status: error.response.status
-        };
-      }
-      
-      // If it's not a response error (e.g., network error)
       throw error;
     }
   },
